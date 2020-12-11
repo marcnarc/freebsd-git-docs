@@ -26,7 +26,7 @@ best for you:
 then once that's cloned, you can simply create a worktree from it:
 ```
 % cd freebsd-current
-% git worktree create ../freebsd-stable-12 stable/12
+% git worktree add ../freebsd-stable-12 stable/12
 ```
 this will checkout `stable/12` into a directory named `freebsd-stable-12`
 that's a peer to the `freebsd-current` directory. Once created, it's updated
@@ -61,13 +61,10 @@ has happened.
 The following answer assumes you committed to `main` and want to
 create a branch called `issue`:
 ```
-% git checkout -b issue     # Create the issue branch
-% git checkout main         # Go back to main branch
-% git reset --hard HEAD^    # Reset what main references
-% git checkout issue        # Back to where you were
+% git branch issue                # Create the 'issue' branch
+% git reset --hard origin/main    # Reset 'main' back to the official tip
+% git checkout issue              # Back to where you were
 ```
-The above assumes one commit, hence the `HEAD^`. You can put anything
-there, but `HEAD^` or `HEAD^^` are the most typical.
 
 ### Ooops! I committed something to the wrong branch!
 
@@ -210,59 +207,33 @@ aren't an image I like to contemplate.
 **Q:** I was on autopilot and did a 'git pull' for my development tree and
 that created a merge commit on the mainline. How do I recover?
 
-**A:** This can happen when you have changes in your tree that aren't properly on
-a branch when you do the pull.
+**A:** This can happen when you invoke the pull with your development branch
+checked out.
 
-There's two phases for recovering. The first is to figure out what the changes were
-that were on the main branch. The second is recovering.
-
-As we discovered above, `git reflog` will help you sort out what at least the hash
-was before the change. Once you have that, you can find what changes were present
-that caused the disruption. At this point, you should drop a branch to that change
-so you don't have to deal with hashes too much:
+Right after the pull, you will have the new merge commit checked out.  Git
+supports a `HEAD^#` syntax to examine the parents of a merge commit:
 ```
-% git checkout -B tmp-branch $HASH
+git log --oneline HEAD^1   # Look at the first parent's commits
+git log --oneline HEAD^2   # Look at the second parent's commits
 ```
-where $HASH is the hash in question (it's almost always one of the hashes of the merge
-commit that's created to bring the changes in, so `git log` would have told you
-the hash as well).
-
-Now that you have a temporary tag, you can fix main branch by forcing the local
-main branch to match the remove main branch:
+From those logs, you can easily identify which commit is your development
+work.  Then you simply reset your branch to the corresponding `HEAD^#`:
 ```
-% git checkout -B main origin/main
+git reset --hard HEAD^2
 ```
 
-You can now use tmp-branch created above to pull in changes from there
-to a proper branch off of main for easier rebasing. If it's one or
-two changes, you may be able to do this with a
-```
-% git rebase -i main tmp-branch
-```
-since that will look for the all the changes from the `tmp-branch` after it
-branched from `main`. Since the most common cause of this issue is
-```
-% git commit ...
-% git commit ...
-% git commit ...
-% git pull
-```
-Those 3 commits will be relative to `main` and can easily be rebased to the
-recreated 'main' branch above (and since we gave the branch a name, they are on a proper branch)
+**Q:** But I also need to fix my 'main' branch. How do I do that?
 
-**Q:** But I hate the name `tmp-branch`. Can I change it easily?
-**A:** Yes.
+**A:** Git keeps track of the origin repository's own branches in an
+`origin/` namespace.  To fix your 'main' branch, just make it point to
+the origin's 'main':
 ```
-% git checkout tmp-branch
-% git checkout -b good-name
-% git branch -d tmp-branch
+git branch -f main origin/main
 ```
-is what I do, though I have a feeling git has an obscure, one step command to do it too.
-There's nothing magical about branches in git: they are just labels on a DAG that can be moved
-forward by a commit. So the above works because you're just swapping out a label. There's no
-metadata about the branch that needs to be preserved due to this.
-
-Get both of them in the same repo.
+There's nothing magical about branches in git: they are just labels on a DAG
+that are automatically moved forward by making commits.  So the above works
+because you're just moving a label. There's no metadata about the branch
+that needs to be preserved due to this.
 
 ### Mixing and matching branches
 
@@ -327,7 +298,7 @@ several. Your rebase method to select sounds tricky.
 out the commits, and then use the above method to split the branch.
 
 So let's assume that there's just one commit with a clean tree. You
-can either use `git rebase` with a `rework` line, or you can use this
+can either use `git rebase` with an `edit` line, or you can use this
 with the commit on the tip. The steps are the same either way. The
 first thing we need to do is to back up one commit while leaving the
 changes uncommitted in the tree:
@@ -362,17 +333,9 @@ and use the `git rebase -i` to fold the related commits together).
 will do the trick. However, there are two disadvantages to this if you
 want to use it for anything other than a mirror you'll reclone.
 
-First, this is a 'naked repo' which has the repository files, but no
-checked out copy. This is great for mirroring, but terrible for day to
-day work. There's a number of ways around this with 'git subtree', but
-if you aren't using it for further local clones, then it's a poor match.
-
-Second, the git normally rewrites the refs (branch name, tags, etc)
-from upstream so that your local refs can evolve independently of
-upstream. This means that you'll lose changes if you are committing to
-this repo on anything other than private project branches.
-
-So to do the worktree thing,
+First, this is a 'bare repo' which has the repository database, but no
+checked out worktree. This is great for mirroring, but terrible for day to
+day work. There's a number of ways around this with 'git worktree':
 ```
 % git clone --mirror https://cgit-beta.freebsd.org/ports.git ports.git
 % cd ports.git
@@ -380,27 +343,36 @@ So to do the worktree thing,
 % git worktree add ../quarterly branches/2020Q4
 % cd ../ports
 ```
+But if you aren't using your mirror for further local clones, then it's a poor match.
+
+The second disadvantage is that Git normally rewrites the refs (branch name, tags, etc)
+from upstream so that your local refs can evolve independently of
+upstream. This means that you'll lose changes if you are committing to
+this repo on anything other than private project branches.
 
 **Q:** So what can I do instead?
 
-**A:** Well, you can grab all of the refs in the upstream repo. git clones everything
-via a 'refspec' and by default the refspec is:
+**A:** Well, you can stuff all of the upstream repo's refs into a private
+namespace in your local repo. Git clones everything via a 'refspec' and
+the default refspec is:
 ```
         fetch = +refs/heads/*:refs/remotes/origin/*
 ```
-which says just fetch the interesting refs that are used to create branches and tags.
+which says just fetch the branch refs.
 
 However, the FreeBSD repo has a number of other things in it. To see
-those, you'll have to fetch everything. To setup your repo to do that
+those, you can add explicit refspecs for each ref namespace, or you
+can fetch everything. To setup your repo to do that:
 ```
 git config --add remote.origin.fetch '+refs/*:refs/origin/*'
 ```
-which will give you everything in the repo. Please note, that this
+which will put everything in the upstream repo into your local repo's
+'res/origin/' namespace. Please note, that this
 also grabs all the unconverted vendor branches and the number of refs
 associated with them is quite large.
 
 You'll need to refer to these 'refs' with their full name because they
-aren't in the `head` namespace.
+aren't in and of Git's regular namespaces.
 ```
 git log refs/origin/vendor/zlib/1.2.10
 ```
